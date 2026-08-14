@@ -267,7 +267,12 @@ impl<T: 'static> EventLoop<T> {
         }
 
         let exit_code = loop {
-            self.wait_for_messages(None);
+            // `interrupt_msg_dispatch` means a redraw ended the previous dispatch. Resume
+            // draining pending messages before emitting another `AboutToWait`, whose redraw
+            // requests could otherwise run before other windows receive their `WM_PAINT`.
+            if !self.window_target.p.runner_shared.interrupt_msg_dispatch.get() {
+                self.wait_for_messages(None);
+            }
             // wait_for_messages calls user application before and after waiting
             // so it may have decided to exit.
             if let Some(code) = self.exit_code() {
@@ -328,7 +333,9 @@ impl<T: 'static> EventLoop<T> {
             }
         }
 
-        if self.exit_code().is_none() {
+        if self.exit_code().is_none()
+            && !self.window_target.p.runner_shared.interrupt_msg_dispatch.get()
+        {
             self.wait_for_messages(timeout);
         }
         // wait_for_messages calls user application before and after waiting
@@ -347,7 +354,11 @@ impl<T: 'static> EventLoop<T> {
             runner.reset_runner();
             PumpStatus::Exit(code)
         } else {
-            runner.prepare_wait();
+            // Preserve the interrupted dispatch across calls: `pump_app_events` still returns
+            // after one redraw, while its next call drains pending messages before another wait.
+            if !runner.interrupt_msg_dispatch.get() {
+                runner.prepare_wait();
+            }
             PumpStatus::Continue
         };
 

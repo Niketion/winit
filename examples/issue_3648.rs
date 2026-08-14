@@ -8,17 +8,19 @@ use std::time::{Duration, Instant};
 
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
-use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
 const WINDOW_COUNT: usize = 3;
 const REPORT_INTERVAL: Duration = Duration::from_secs(1);
+const FRAME_INTERVAL: Duration = Duration::from_millis(16);
 
 #[derive(Default)]
 struct RedrawTest {
     windows: HashMap<WindowId, Window>,
     redraws: HashMap<WindowId, u64>,
     last_report: Option<Instant>,
+    next_redraw: Option<Instant>,
 }
 
 impl ApplicationHandler for RedrawTest {
@@ -38,7 +40,9 @@ impl ApplicationHandler for RedrawTest {
             self.windows.insert(window.id(), window);
         }
 
-        self.last_report = Some(Instant::now());
+        let now = Instant::now();
+        self.last_report = Some(now);
+        self.next_redraw = Some(now);
     }
 
     fn window_event(
@@ -63,20 +67,30 @@ impl ApplicationHandler for RedrawTest {
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        for window in self.windows.values() {
-            if window.is_visible() != Some(false) {
-                window.request_redraw();
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let now = Instant::now();
+        let next_redraw = self.next_redraw.unwrap_or(now);
+
+        if now >= next_redraw {
+            for window in self.windows.values() {
+                if window.is_visible() != Some(false) {
+                    window.request_redraw();
+                }
             }
+
+            self.next_redraw = Some(now + FRAME_INTERVAL);
         }
 
-        let now = Instant::now();
         if self.last_report.is_some_and(|last| now.duration_since(last) >= REPORT_INTERVAL) {
             let mut counts: Vec<_> = self.redraws.iter().collect();
             counts.sort_unstable_by_key(|(id, _)| format!("{id:?}"));
             eprintln!("redraw totals: {counts:?}");
             self.last_report = Some(now);
         }
+
+        event_loop.set_control_flow(ControlFlow::WaitUntil(
+            self.next_redraw.unwrap_or(now + FRAME_INTERVAL),
+        ));
     }
 }
 
